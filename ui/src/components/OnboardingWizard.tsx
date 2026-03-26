@@ -17,6 +17,7 @@ import {
   PopoverTrigger
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { ClaudeLoginTerminal } from "./ClaudeLoginTerminal";
 import { cn } from "../lib/utils";
 import {
   extractModelName,
@@ -241,6 +242,15 @@ export function OnboardingWizard() {
     adapterType === "claude_local" &&
     adapterEnvResult?.status === "fail" &&
     hasAnthropicApiKeyOverrideCheck;
+  const needsAuth =
+    adapterEnvResult?.checks.some(
+      (check) =>
+        check.code === "claude_hello_probe_auth_required" ||
+        check.code === "codex_hello_probe_auth_required" ||
+        check.code === "codex_openai_api_key_missing" ||
+        (check.level === "warn" && /login|auth|not.logged/i.test(check.message))
+    ) ?? false;
+  const [pendingAuthSecretRef, setPendingAuthSecretRef] = useState<{ type: "secret_ref"; secretId: string; version: string } | null>(null);
   const filteredModels = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
     return (adapterModels ?? []).filter((entry) => {
@@ -339,6 +349,16 @@ export function OnboardingWizard() {
           ? { ...(config.env as Record<string, unknown>) }
           : {};
       env.ANTHROPIC_API_KEY = { type: "plain", value: "" };
+      config.env = env;
+    }
+    if (adapterType === "claude_local" && pendingAuthSecretRef) {
+      const env =
+        typeof config.env === "object" &&
+        config.env !== null &&
+        !Array.isArray(config.env)
+          ? { ...(config.env as Record<string, unknown>) }
+          : {};
+      env.CLAUDE_CODE_OAUTH_TOKEN = pendingAuthSecretRef;
       config.env = env;
     }
     return config;
@@ -1065,6 +1085,17 @@ export function OnboardingWizard() {
                               ? "Retrying..."
                               : "Unset ANTHROPIC_API_KEY"}
                           </Button>
+                        </div>
+                      )}
+
+                      {needsAuth && (adapterType === "claude_local" || adapterType === "codex_local") && (
+                        <div className="rounded-md border border-border p-3">
+                          <ClaudeLoginTerminal
+                            agentId=""
+                            companyId={effectiveOnboardingOptions.companyId ?? createdCompanyId ?? ""}
+                            adapterType={adapterType}
+                            onTokenReady={(ref) => setPendingAuthSecretRef(ref)}
+                          />
                         </div>
                       )}
 

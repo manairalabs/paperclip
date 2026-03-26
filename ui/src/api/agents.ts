@@ -182,6 +182,10 @@ export const agentsApi = {
   ) => api.post<HeartbeatRun | { status: "skipped" }>(agentPath(id, companyId, "/wakeup"), data),
   loginWithClaude: (id: string, companyId?: string) =>
     api.post<ClaudeLoginResult>(agentPath(id, companyId, "/claude-login"), {}),
+  codexDeviceAuth: (id: string, companyId?: string) =>
+    api.post<{ deviceUrl: string | null; deviceCode: string | null; stdout: string; stderr: string }>(agentPath(id, companyId, "/codex-device-auth"), {}),
+  codexDeviceAuthForCompany: (companyId: string) =>
+    api.post<{ deviceUrl: string | null; deviceCode: string | null; stdout: string; stderr: string }>(`/companies/${companyId}/codex-device-auth`, {}),
   availableSkills: () =>
     api.get<{ skills: AvailableSkill[] }>("/skills/available"),
 };

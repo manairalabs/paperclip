@@ -2055,6 +2055,111 @@ export function agentRoutes(db: Db) {
     res.json(result);
   });
 
+  router.post("/agents/:id/codex-device-auth", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    if (id) {
+      const agent = await svc.getById(id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      assertCompanyAccess(req, agent.companyId);
+    }
+
+    // Spawn codex login --device-auth locally, capture output for URL + code
+    const { spawn } = await import("node:child_process");
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const proc = spawn("codex", ["login", "--device-auth"], {
+      env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    // Wait up to 15s for device URL + code to appear
+    const result = await new Promise<{ deviceUrl: string | null; deviceCode: string | null; stdout: string; stderr: string }>((resolve) => {
+      const checkInterval = setInterval(() => {
+        const clean = stripAnsi(stdout + stderr);
+        const urlMatch = clean.match(/https?:\/\/auth\.openai\.com\/[^\s'"<>)]+/);
+        const codeMatch = clean.match(/[A-Z0-9]{4}-[A-Z0-9]{5,}/);
+        if (urlMatch && codeMatch) {
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          resolve({ deviceUrl: urlMatch[0], deviceCode: codeMatch[0], stdout: clean, stderr: "" });
+        }
+      }, 500);
+
+      const timeout = setTimeout(() => {
+        clearInterval(checkInterval);
+        const clean = stripAnsi(stdout + stderr);
+        resolve({ deviceUrl: null, deviceCode: null, stdout: clean, stderr: "" });
+      }, 15000);
+
+      proc.on("exit", () => {
+        clearInterval(checkInterval);
+        clearTimeout(timeout);
+        const clean = stripAnsi(stdout + stderr);
+        const urlMatch = clean.match(/https?:\/\/auth\.openai\.com\/[^\s'"<>)]+/);
+        const codeMatch = clean.match(/[A-Z0-9]{4}-[A-Z0-9]{5,}/);
+        resolve({ deviceUrl: urlMatch?.[0] ?? null, deviceCode: codeMatch?.[0] ?? null, stdout: clean, stderr: "" });
+      });
+    });
+
+    res.json(result);
+  });
+
+  // Codex device auth without agent — for onboarding
+  router.post("/companies/:companyId/codex-device-auth", async (req, res) => {
+    assertBoard(req);
+    assertCompanyAccess(req, req.params.companyId as string);
+
+    const { spawn } = await import("node:child_process");
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const proc = spawn("codex", ["login", "--device-auth"], {
+      env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const result = await new Promise<{ deviceUrl: string | null; deviceCode: string | null; stdout: string; stderr: string }>((resolve) => {
+      const checkInterval = setInterval(() => {
+        const clean = stripAnsi(stdout + stderr);
+        const urlMatch = clean.match(/https?:\/\/auth\.openai\.com\/[^\s'"<>)]+/);
+        const codeMatch = clean.match(/[A-Z0-9]{4}-[A-Z0-9]{5,}/);
+        if (urlMatch && codeMatch) {
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          resolve({ deviceUrl: urlMatch[0], deviceCode: codeMatch[0], stdout: clean, stderr: "" });
+        }
+      }, 500);
+
+      const timeout = setTimeout(() => {
+        clearInterval(checkInterval);
+        const clean = stripAnsi(stdout + stderr);
+        resolve({ deviceUrl: null, deviceCode: null, stdout: clean, stderr: "" });
+      }, 15000);
+
+      proc.on("exit", () => {
+        clearInterval(checkInterval);
+        clearTimeout(timeout);
+        const clean = stripAnsi(stdout + stderr);
+        const urlMatch = clean.match(/https?:\/\/auth\.openai\.com\/[^\s'"<>)]+/);
+        const codeMatch = clean.match(/[A-Z0-9]{4}-[A-Z0-9]{5,}/);
+        resolve({ deviceUrl: urlMatch?.[0] ?? null, deviceCode: codeMatch?.[0] ?? null, stdout: clean, stderr: "" });
+      });
+    });
+
+    res.json(result);
+  });
+
   router.get("/companies/:companyId/heartbeat-runs", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);

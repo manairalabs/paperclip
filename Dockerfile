@@ -1,9 +1,11 @@
+# ── Base ──────────────────────────────────────────────────────────────
 FROM node:lts-trixie-slim AS base
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 
+# ── Install ALL deps (dev + prod) for building ──────────────────────
 FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
@@ -25,6 +27,7 @@ COPY patches/ patches/
 
 RUN pnpm install --frozen-lockfile
 
+# ── Build everything ─────────────────────────────────────────────────
 FROM base AS build
 WORKDIR /app
 COPY --from=deps /app /app
@@ -34,10 +37,52 @@ RUN pnpm --filter @paperclipai/plugin-sdk build
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 
+# ── Prune to production deps only ────────────────────────────────────
+FROM base AS prune
+WORKDIR /app
+COPY --from=build /app /app
+RUN pnpm prune --prod \
+  && pnpm store prune \
+  && rm -rf /app/.git /app/tests /app/evals /app/docs /app/doc \
+            /app/report /app/releases /app/scripts /app/docker
+
+# ── Production ───────────────────────────────────────────────────────
 FROM base AS production
 WORKDIR /app
-COPY --chown=node:node --from=build /app /app
-RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai \
+
+# 1. Root workspace config
+COPY --chown=node:node --from=prune /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml /app/.npmrc /app/
+
+# 2. Root production node_modules (pruned)
+COPY --chown=node:node --from=prune /app/node_modules /app/node_modules
+
+# 3. Server: compiled dist + node_modules (contains tsx) + package.json
+COPY --chown=node:node --from=prune /app/server/package.json /app/server/package.json
+COPY --chown=node:node --from=prune /app/server/node_modules /app/server/node_modules
+COPY --chown=node:node --from=build /app/server/dist /app/server/dist
+
+# 4. UI: only the built static assets
+COPY --chown=node:node --from=build /app/ui/dist /app/ui/dist
+
+# 5. Workspace packages that export .ts (resolved at runtime via tsx):
+#    shared, db, adapter-utils need src/ directories
+COPY --chown=node:node --from=prune /app/packages/shared /app/packages/shared
+COPY --chown=node:node --from=prune /app/packages/db /app/packages/db
+COPY --chown=node:node --from=prune /app/packages/adapter-utils /app/packages/adapter-utils
+
+# 6. plugin-sdk exports from dist/ (already compiled) + needs node_modules for zod etc.
+COPY --chown=node:node --from=prune /app/packages/plugins/sdk /app/packages/plugins/sdk
+COPY --chown=node:node --from=build /app/packages/plugins/sdk/dist /app/packages/plugins/sdk/dist
+
+# 7. Adapter packages (export .ts, resolved via tsx at runtime)
+COPY --chown=node:node --from=prune /app/packages/adapters /app/packages/adapters
+
+# 8. Skills directory (referenced at runtime)
+COPY --chown=node:node --from=build /app/skills /app/skills
+
+# Install global agent CLIs (removed opencode-ai, saves ~517MB)
+RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest \
+  && npm cache clean --force \
   && mkdir -p /paperclip \
   && chown node:node /paperclip
 

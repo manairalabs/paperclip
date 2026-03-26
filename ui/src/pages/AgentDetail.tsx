@@ -13,6 +13,7 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { ApiError } from "../api/client";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
+import { ClaudeLoginTerminal } from "../components/ClaudeLoginTerminal";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
 import { usePanel } from "../context/PanelContext";
@@ -2873,11 +2874,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
   const run = hydratedRun ?? initialRun;
   const metrics = runMetrics(run);
   const [sessionOpen, setSessionOpen] = useState(false);
-  const [claudeLoginResult, setClaudeLoginResult] = useState<ClaudeLoginResult | null>(null);
-
-  useEffect(() => {
-    setClaudeLoginResult(null);
-  }, [run.id]);
+  const [showClaudeLoginTerminal, setShowClaudeLoginTerminal] = useState(false);
 
   const cancelRun = useMutation({
     mutationFn: () => heartbeatsApi.cancel(run.id),
@@ -2972,13 +2969,6 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.runtimeState(run.agentId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.taskSessions(run.agentId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.runIssues(run.id) });
-    },
-  });
-
-  const runClaudeLogin = useMutation({
-    mutationFn: () => agentsApi.loginWithClaude(run.agentId, run.companyId),
-    onSuccess: (data) => {
-      setClaudeLoginResult(data);
     },
   });
 
@@ -3090,50 +3080,28 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                 {run.errorCode && <span className="text-muted-foreground ml-1">({run.errorCode})</span>}
               </div>
             )}
-            {run.errorCode === "claude_auth_required" && adapterType === "claude_local" && (
+            {(
+              run.errorCode === "claude_auth_required" ||
+              run.errorCode === "codex_auth_required" ||
+              (adapterType === "codex_local" && run.status === "failed" && /401|unauthorized|authentication|not.logged.in/i.test(run.error ?? "")) ||
+              (adapterType === "claude_local" && run.status === "failed" && /not.logged.in|please.run.*login/i.test(run.error ?? ""))
+            ) && (adapterType === "claude_local" || adapterType === "codex_local") && (
               <div className="space-y-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => runClaudeLogin.mutate()}
-                  disabled={runClaudeLogin.isPending}
-                >
-                  {runClaudeLogin.isPending ? "Running claude login..." : "Login to Claude Code"}
-                </Button>
-                {runClaudeLogin.isError && (
-                  <p className="text-xs text-destructive">
-                    {runClaudeLogin.error instanceof Error
-                      ? runClaudeLogin.error.message
-                      : "Failed to run Claude login"}
-                  </p>
-                )}
-                {claudeLoginResult?.loginUrl && (
-                  <p className="text-xs">
-                    Login URL:
-                    <a
-                      href={claudeLoginResult.loginUrl}
-                      className="text-blue-600 underline underline-offset-2 ml-1 break-all dark:text-blue-400"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {claudeLoginResult.loginUrl}
-                    </a>
-                  </p>
-                )}
-                {claudeLoginResult && (
-                  <>
-                    {!!claudeLoginResult.stdout && (
-                      <pre className="bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap">
-                        {claudeLoginResult.stdout}
-                      </pre>
-                    )}
-                    {!!claudeLoginResult.stderr && (
-                      <pre className="bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-red-700 dark:text-red-300 overflow-x-auto whitespace-pre-wrap">
-                        {claudeLoginResult.stderr}
-                      </pre>
-                    )}
-                  </>
+                {!showClaudeLoginTerminal ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setShowClaudeLoginTerminal(true)}
+                  >
+                    {adapterType === "codex_local" ? "Login to Codex" : "Login to Claude Code"}
+                  </Button>
+                ) : (
+                  <ClaudeLoginTerminal
+                    agentId={run.agentId}
+                    companyId={run.companyId}
+                    adapterType={adapterType}
+                  />
                 )}
               </div>
             )}
