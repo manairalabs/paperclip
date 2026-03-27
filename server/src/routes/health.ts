@@ -89,5 +89,43 @@ export function healthRoutes(
     });
   });
 
+  // Lightweight activity endpoint for Runner health checks (no auth required)
+  router.get("/activity", async (_req, res) => {
+    if (!db) {
+      res.json({ lastRunAt: null, runs7d: 0, runs30d: 0 });
+      return;
+    }
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [lastRun, runs7d, runs30d] = await Promise.all([
+      db
+        .select({ startedAt: heartbeatRuns.startedAt })
+        .from(heartbeatRuns)
+        .where(sql`${heartbeatRuns.startedAt} IS NOT NULL`)
+        .orderBy(sql`${heartbeatRuns.startedAt} DESC`)
+        .limit(1)
+        .then((rows) => rows[0]?.startedAt ?? null),
+      db
+        .select({ count: count() })
+        .from(heartbeatRuns)
+        .where(gt(heartbeatRuns.startedAt, sevenDaysAgo))
+        .then((rows) => Number(rows[0]?.count ?? 0)),
+      db
+        .select({ count: count() })
+        .from(heartbeatRuns)
+        .where(gt(heartbeatRuns.startedAt, thirtyDaysAgo))
+        .then((rows) => Number(rows[0]?.count ?? 0)),
+    ]);
+
+    res.json({
+      lastRunAt: lastRun instanceof Date ? lastRun.toISOString() : lastRun,
+      runs7d,
+      runs30d,
+    });
+  });
+
   return router;
 }
