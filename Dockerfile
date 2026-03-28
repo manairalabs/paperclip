@@ -77,11 +77,32 @@ COPY --chown=node:node --from=build /app/packages/plugins/sdk/dist /app/packages
 # 7. Adapter packages (export .ts, resolved via tsx at runtime)
 COPY --chown=node:node --from=prune /app/packages/adapters /app/packages/adapters
 
-# 8. Skills directory (referenced at runtime)
+# 8. CLI: source + node_modules (runs via tsx at runtime)
+COPY --chown=node:node --from=prune /app/cli /app/cli
+
+# 9. Skills directory (referenced at runtime)
 COPY --chown=node:node --from=build /app/skills /app/skills
 
-# Install global agent CLIs (removed opencode-ai, saves ~517MB)
-RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest \
+# Install system tools for agents
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    jq ripgrep fd-find python3 python3-pip \
+    build-essential \
+  && ln -sf /usr/bin/fdfind /usr/bin/fd \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install gh CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+  && apt-get update && apt-get install -y --no-install-recommends gh \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install global agent CLIs + browser tools
+RUN npm install --global --omit=dev \
+    @anthropic-ai/claude-code@latest \
+    @openai/codex@latest \
+    playwright \
+  && npx playwright install --with-deps chromium \
   && npm cache clean --force \
   && mkdir -p /paperclip \
   && chown node:node /paperclip
