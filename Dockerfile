@@ -102,6 +102,7 @@ RUN npm install --global --omit=dev \
     @anthropic-ai/claude-code@latest \
     @openai/codex@latest \
     playwright \
+    qmd \
   && npx playwright install --with-deps chromium \
   && npm cache clean --force \
   && mkdir -p /paperclip \
